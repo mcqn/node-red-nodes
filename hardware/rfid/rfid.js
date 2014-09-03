@@ -55,7 +55,7 @@ module.exports = function(RED) {
                     node.cardPresent = true;
                 }
             });
-        }, 250);
+        }, 150);
 
         node.on("close", function() {
             clearInterval(node._interval);
