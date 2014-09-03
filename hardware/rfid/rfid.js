@@ -36,7 +36,7 @@ module.exports = function(RED) {
         var node = this;
 
         node._interval = setInterval( function() {
-            exec("sudo /home/pi/raspberryrfid/rcapp", function(err,stdout,stderr) {
+            exec("sudo /home/pi/node-red/nodes/node-red-nodes/hardware/rfid/rcapp", function(err,stdout,stderr) {
                 if (err) {
                     if (node.cardPresent) {
                         // The card has just been removed
