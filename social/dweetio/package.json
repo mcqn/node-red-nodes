@@ -1,19 +1,19 @@
 {
-    "name"          : "node-red-node-suncalc",
+    "name"          : "node-red-node-dweetio",
     "version"       : "0.0.5",
-    "description"   : "A Node-RED node to provide a signal at sunrise and sunset",
+    "description"   : "A Node-RED node to send and receive simple dweets",
     "dependencies"  : {
-        "suncalc"   : "1.5.*"
+        "node-dweetio"   : "0.0.11"
     },
     "repository" : {
         "type":"git",
-        "url":"https://github.com/node-red/node-red-nodes/tree/master/time"
+        "url":"https://github.com/node-red/node-red-nodes/tree/master/social/dweetio"
     },
     "license": "Apache-2.0",
-    "keywords": [ "node-red", "suncalc" ],
+    "keywords": [ "node-red", "dweetio" ],
     "node-red"      : {
         "nodes"     : {
-            "suncalc": "79-suncalc.js"
+            "dweetio": "55-dweetio.js"
         }
     },
     "author": {
