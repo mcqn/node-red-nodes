@@ -16,46 +16,41 @@
 
 module.exports = function(RED) {
     "use strict";
-    var util = require("util");
-    var exec = require('child_process').exec;
+    var rfid_sl018 = require("rfid-sl018");
     var fs =  require('fs');
 
     if (!fs.existsSync("/dev/ttyAMA0")) { // unlikely if not on a Pi
         throw "Info : Ignoring Raspberry Pi specific node.";
     }
 
-// FIXME Change this to check for rcapp?
-    if (!fs.existsSync("/usr/local/bin/gpio")) { // gpio command not installed
-        throw "Info : Can't find Raspberry Pi wiringPi gpio command.";
-    }
-
     function RFID(n) {
         RED.nodes.createNode(this,n);
         this.cardPresent = false;
         this.cardID = "";
+        this.rfid = new rfid_sl018.RFID_SL018();
+        this.rfid.init();
         var node = this;
 
         node._interval = setInterval( function() {
-            exec("sudo /home/pi/node-red/nodes/node-red-nodes/hardware/rfid/rcapp", function(err,stdout,stderr) {
-                if (err) {
-                    if (node.cardPresent) {
-                        // The card has just been removed
-                        var msg = {topic:"pi/rfid-removed", payload:node.cardID};
-                        node.send(msg);
-                    }
-                    node.cardPresent = false;
+            var tag = node.rfid.selectTag();
+            if (tag) {
+                if (!node.cardPresent) {
+                    node.cardID = tag.tagIDString;
+                    var msg = {topic:"pi/rfid-presented", payload:node.cardID};
+                    node.send(msg);
                 }
-                else {
-                    if (!node.cardPresent) {
-                        node.cardID = stdout;
-                        var msg = {topic:"pi/rfid-presented", payload:node.cardID};
-                        node.send(msg);
-                    }
-                    // else it's still the same card on the reader
-                    node.cardPresent = true;
+                // else it's still the same card on the reader
+                node.cardPresent = true;
+            }
+            else {
+                if (node.cardPresent) {
+                    // The card has just been removed
+                    var msg = {topic:"pi/rfid-removed", payload:node.cardID};
+                    node.send(msg);
                 }
-            });
-        }, 150);
+                node.cardPresent = false;
+            }
+        }, 250);
 
         node.on("close", function() {
             clearInterval(node._interval);
