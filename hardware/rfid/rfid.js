@@ -100,6 +100,38 @@ module.exports = function(RED) {
         });
     }
 
+    function RFIDRead(n) {
+        RED.nodes.createNode(this, n);
+        this.name = n.name;
+        this.rfid = ourfid;
+        var node = this;
+
+        this.on("input", function(msg) {
+            if (msg != null && msg.hasOwnProperty("payload")) {
+                var tag = this.rfid.selectTag();
+                if (tag) {
+                    if (this.rfid.authenticate(this.rfid.sectorForBlock(msg.block))) {
+                        var data = this.rfid.readBlock(msg.block);
+                        if (data != null) {
+                            msg.payload = data.toString('hex');
+                            this.send(msg);
+                        } else {
+                            this.error("Couldn't read from RFID tag");
+                        }
+                    } else {
+                        this.error("Couldn't authenticate RFID tag");
+                    }
+                } else {
+                    this.error("No RFID tag found");
+                }
+            } else {
+                this.error("Missing a msg.payload");
+            }
+        });
+    }
+
+
     RED.nodes.registerType("rpi-rfid in",RFID);
     RED.nodes.registerType("rpi-rfid write",RFIDWrite);
+    RED.nodes.registerType("rpi-rfid read",RFIDRead);
 }
