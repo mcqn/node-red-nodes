@@ -1,5 +1,5 @@
 <!--
-  Copyright 2014 MCQN Ltd.
+  Copyright 2014-2015 MCQN Ltd.
 
   Licensed under the Apache License, Version 2.0 (the "License");
   you may not use this file except in compliance with the License.
@@ -49,6 +49,17 @@
     <p>RFID read block node. Takes a <b>msg.payload</b> with the number of a block to read from the tag currently on the RFID reader and outputs a msg with msg.payload of the data in that block.</p>
 </script>
 
+<script type="text/x-red" data-template-name="rpi-rfid read-ndef">
+    <div class="form-row">
+        <label for="node-input-name"><i class="icon-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+</script>
+
+<script type="text/x-red" data-help-name="rpi-rfid read-ndef">
+    <p>RFID read NDEF records node. Reads any NDEF records from the tag currently on the RFID reader and outputs a msg for each record found.</p>
+</script>
+
 <script type="text/javascript">
     RED.nodes.registerType('rpi-rfid in',{
         category: 'advanced-input',
@@ -95,6 +106,23 @@
         icon: "rpi.png",
         label: function() {
             return this.name||"RFID Write";
+        },
+        labelStyle: function() {
+            return this.name?"node_label_italic":"";
+        }
+    });
+
+    RED.nodes.registerType('rpi-rfid read-ndef',{
+        category: 'advanced-input',
+        color:"#c6dbef",
+        defaults: {
+            name: { value:"" },
+        },
+        inputs:1,
+        outputs:1,
+        icon: "rpi.png",
+        label: function() {
+            return this.name||"Read NDEF";
         },
         labelStyle: function() {
             return this.name?"node_label_italic":"";

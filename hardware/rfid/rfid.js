@@ -1,5 +1,5 @@
 /**
- * Copyright 2014 MCQN Ltd.
+ * Copyright 2014-2015 MCQN Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ module.exports = function(RED) {
     "use strict";
     var rfid_sl030 = require("rfid-sl030");
     var fs =  require('fs');
+    var ndef = require('ndef');
     // Create a single RFID instance that all nodes can use
     var ourfid = new rfid_sl030.RFID_SL030();
     ourfid.init();
@@ -130,8 +131,116 @@ module.exports = function(RED) {
         });
     }
 
+    function RFIDReadNDEF(n) {
+        RED.nodes.createNode(this, n);
+        this.name = n.name;
+        this.rfid = ourfid;
+        var node = this;
+
+        this.on("input", function(msg) {
+            if (msg != null) {
+                var tag = this.rfid.selectTag();
+                if (tag) {
+                    var MADkey = new Buffer(6);
+                    MADkey[0] = 0xA0;
+                    MADkey[1] = 0xA1;
+                    MADkey[2] = 0xA2;
+                    MADkey[3] = 0xA3;
+                    MADkey[4] = 0xA4;
+                    MADkey[5] = 0xA5;
+                    var NDEFkey = new Buffer(6);
+                    NDEFkey[0] = 0xD3;
+                    NDEFkey[1] = 0xF7;
+                    NDEFkey[2] = 0xD3;
+                    NDEFkey[3] = 0xF7;
+                    NDEFkey[4] = 0xD3;
+                    NDEFkey[5] = 0xF7;
+                    // This currently only works for MiFare Classic tags
+                    // See http://www.nxp.com/documents/application_note/AN1304.pdf for details
+                    // on how NDEF data is stored in Classic tags
+                    // Read the MAD (Mifare Application Directory) in to find out where the
+                    // NDEF blocks are
+                    if (this.rfid.authenticate(this.rfid.sectorForBlock(1), MADkey)) {
+                        var mad1 = this.rfid.readBlock(1);
+                        var mad2 = this.rfid.readBlock(2);
+                        var mad = Buffer.concat([mad1, mad2]);
+                
+                        // The MAD has two-bytes for each sector, explaining
+                        // what application is using them.  Read in all the
+                        // NDEF sectors and store them in an array of buffers
+                        var ndefSectors = [];
+                        // FIXME This assumes we're only using MAD1, and only
+                        // FIXME using the first 1K of the tag
+                        for (i = 1; i < 16; i++) {
+                            if ((mad[i*2] == 0x03) && (mad[i*2+1] == 0xE1)) {
+                                // This sector contains NDEF data
+                                if (this.rfid.authenticate(i, NDEFkey)) {
+                                    var block0 = this.rfid.readBlock(i<<2);
+                                    var block1 = this.rfid.readBlock((i<<2)+1);
+                                    var block2 = this.rfid.readBlock((i<<2)+2);
+                                    ndefSectors.push(Buffer.concat([block0, block1, block2]));
+                                } else {
+                                    console.log("Couldn't authenticate NDEF sector with NDEF key");
+                                }
+                            }
+                        }
+                        // Now we've got all the NDEF data, we need to parse it
+                        var rawNDEF = Buffer.concat(ndefSectors);
+                        var idx = 0;
+                        var ndefRecords = [];
+                        while (idx < rawNDEF.length) {
+                            // Look for the initial TLV structure
+                            var t = rawNDEF[idx++];
+                            if (t != 0) {
+                                // It's not a NULL TLV, see how long it is
+                                var l = rawNDEF[idx++];
+                                if (l == 0xFF) {
+                                    // 3-byte length format, the next two 
+                                    // bytes give our length
+                                    l = rawNDEF[idx++] << 8 | rawNEF[idx++];
+                                }
+                                if (t == 0x03) {
+                                    console.log("Found NDEF message");
+                                    var message = [];
+                                    while (l-- > 0) {
+                                        message.push(rawNDEF[idx++]);
+                                    }
+                                    ndefRecords = ndefRecords.concat(ndef.decodeMessage(message));   
+                                } else if (t == 0xFE) {
+                                    // Terminator TLV block, so give up now
+                                    console.log("Found terminator block");
+                                    break;
+                                } else {
+                                    // Skip over l bytes to get to the next TLV
+                                    console.log("Skipping "+t.toString(16)+" block, length "+l+" bytes");
+                                    idx += l;
+                                }
+                            } else {
+                                console.log("NULL TLV");
+                            }
+                        }
+                        //console.log(ndefRecords);
+                        for (i = 0; i < ndefRecords.length; i++) {
+                            //var msg = {topic:"pi/rfid-ndef", payload:ndefRecords[i], ndef: ndefRecords[i]};
+                            msg.topic="pi/rfid-ndef";
+                            msg.payload=ndefRecords[i];
+                            msg.ndef= ndefRecords[i];
+                            this.send(msg);
+                        }
+                    } else {
+                        console.log("Couldn't authenticate RFID tag");
+                    }
+                } else {
+                    this.error("No RFID tag found");
+                }
+            } else {
+                this.error("Missing a msg.payload");
+            }
+        });
+    }
 
     RED.nodes.registerType("rpi-rfid in",RFID);
     RED.nodes.registerType("rpi-rfid write",RFIDWrite);
     RED.nodes.registerType("rpi-rfid read",RFIDRead);
+    RED.nodes.registerType("rpi-rfid read-ndef",RFIDReadNDEF);
 }
