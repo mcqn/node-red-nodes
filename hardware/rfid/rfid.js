@@ -141,13 +141,6 @@ module.exports = function(RED) {
             if (msg != null) {
                 var tag = this.rfid.selectTag();
                 if (tag) {
-                    var MADkey = new Buffer(6);
-                    MADkey[0] = 0xA0;
-                    MADkey[1] = 0xA1;
-                    MADkey[2] = 0xA2;
-                    MADkey[3] = 0xA3;
-                    MADkey[4] = 0xA4;
-                    MADkey[5] = 0xA5;
                     var NDEFkey = new Buffer(6);
                     NDEFkey[0] = 0xD3;
                     NDEFkey[1] = 0xF7;
@@ -159,12 +152,8 @@ module.exports = function(RED) {
                     // See http://www.nxp.com/documents/application_note/AN1304.pdf for details
                     // on how NDEF data is stored in Classic tags
                     // Read the MAD (Mifare Application Directory) in to find out where the
-                    // NDEF blocks are
-                    if (this.rfid.authenticate(this.rfid.sectorForBlock(1), MADkey)) {
-                        var mad1 = this.rfid.readBlock(1);
-                        var mad2 = this.rfid.readBlock(2);
-                        var mad = Buffer.concat([mad1, mad2]);
-                
+                    var mad = readMAD(this.rfid);
+                    if (mad) {
                         // The MAD has two-bytes for each sector, explaining
                         // what application is using them.  Read in all the
                         // NDEF sectors and store them in an array of buffers
@@ -239,8 +228,154 @@ module.exports = function(RED) {
         });
     }
 
+    function RFIDWriteNDEF(n) {
+        RED.nodes.createNode(this,n);
+        this.name = n.name;
+        this.rfid = ourfid; 
+        var node = this;
+
+        this.on("input", function(msg) {
+            if (msg != null) {
+                if (msg.payload) {
+                    // We've got our pre-requisites
+                    // Find an RFID tag first
+                    var tag = this.rfid.selectTag();
+                    if (tag) {
+                        // Tag found.
+                        // Build up the NDEF records we'll send
+                        // FIXME Cope with msg.payload not being an array of objs
+                        var ndefRecords = [];
+                        for (i = 0; i < msg.payload.length; i++) {
+                            if (msg.payload[i].type == "Sp") {
+                                // URL record
+                                ndefRecords.push(ndef.uriRecord(msg.payload[i].value));
+                            } else if (msg.payload[i].type == "T") {
+                                // Text record
+                                ndefRecords.push(ndef.textRecord(msg.payload[i].value));
+                            }
+                        }
+                        // Try to read in the MAD from the tag
+                        var mad = readMAD(this.rfid);
+
+                        if (mad) {
+                            console.log(mad);
+                        } else {
+                            console.log("Empty MAD");
+                            // See if we can format the MAD
+                            //FIXME mad = formatMAD();
+                        }
+                        if (mad && ndefRecords.length) {
+                            // Prep the NDEF message
+                            var ndefMessage = ndef.encodeMessage(ndefRecords);
+                            // Prepend the TLV value to put it into a Mifare Classic tag
+                            // (Prepend in reverse order as unshift puts a byte at the start of the array)
+                            if (ndefMessage.length >= 0xFF) {
+                                // 3-byte length version
+                                ndefMessage.unshift(ndefMessage.length & 0xff);
+                                ndefMessage.unshift(ndefMessage.length >> 8);
+                                ndefMessage.unshift(0xff);
+                            } else {
+                                ndefMessage.unshift(ndefMessage.length);
+                            }
+                            ndefMessage.unshift(0x03);
+                            // Append a terminator block
+                            ndefMessage.push(0xfe);
+                            ndefMessage.push(0x00);
+
+                            var buffer = new Buffer(ndefMessage);
+                            console.log(buffer.toString('hex'));
+                            var sector = 1;
+                            var idx = 0;
+                            console.log("mad: ");
+                            console.log(mad);
+                            while ((idx < buffer.length) && (sector < 16)) {
+                                // Find a sector we can write to
+                                console.log("sector*2: "+sector*2);
+                                console.log("mad[sector*2]: "+mad[sector*2]);
+                                console.log("mad[sector*2+1]: "+mad[sector*2+1]);
+
+                                if ((mad[sector*2] == 0x03) && (mad[sector*2+1] == 0xE1)) {
+                                    // It's an existing NDEF block that we'll overwrite
+                                    var NDEFkey = new Buffer(6);
+                                    NDEFkey[0] = 0xD3;
+                                    NDEFkey[1] = 0xF7;
+                                    NDEFkey[2] = 0xD3;
+                                    NDEFkey[3] = 0xF7;
+                                    NDEFkey[4] = 0xD3;
+                                    NDEFkey[5] = 0xF7;
+                                    if (this.rfid.authenticate(sector, NDEFkey)) {
+                                        var block = new Buffer(16);
+                                        for (var b = 0; b < 3; b++) {
+                                            block.fill(0);
+                                            buffer.copy(block, 0, idx, idx+16);
+console.log(((sector<<2)+b)+": "+block);
+                                            this.rfid.writeBlock((sector<<2)+b, block);
+                                            idx+=16;
+                                        }
+                                    }
+                                }
+                                if ((mad[sector*2] == 0x00) && (mad[sector*2+1] == 0x00)) {
+                                    // It's an empty block, so use the default key to authenticate
+                                    // We can write to this sector
+                                    if (this.rfid.authenticate(sector)) {
+                                        var block = new Buffer(16);
+                                        for (var b = 0; b < 3; b++) {
+                                            block.fill(0);
+                                            buffer.copy(block, 0, idx, idx+16);
+                                            this.rfid.writeBlock((sector<<2)+b, block);
+                                            idx+=16;
+                                        }
+                                        // Write the NDEF key into the final sector
+                                        block.fill(0xff); // This will leave the 2nd key as the default
+                                        NDEFkey.copy(block, 0);
+                                        block[6] = 0x7F;
+                                        block[7] = 0x07;
+                                        block[8] = 0x88;
+                                        block[9] = 0x40;
+                                        this.rfid.writeBlock((sector<<2)+3, block);
+                                    }
+                                }
+                                sector++;
+                            }
+                            this.send(msg);
+                        } else {
+                            // Error, couldn't authenticate tag
+                            this.error("Couldn't authenticate RFID tag");
+                        }
+                    } else {
+                        // Failed to find a tag
+                        this.error("No RFID tag found");
+                    }
+                } else {
+                    this.error("Missing either a msg.block or a msg.payload");
+                }
+            }
+        });
+    }
+
+    function readMAD(rfid) {
+        var MADkey = new Buffer(6);
+        MADkey[0] = 0xA0;
+        MADkey[1] = 0xA1;
+        MADkey[2] = 0xA2;
+        MADkey[3] = 0xA3;
+        MADkey[4] = 0xA4;
+        MADkey[5] = 0xA5;
+        // Read the MAD (Mifare Application Directory) in to find out where the
+        // NDEF blocks are
+        if (rfid.authenticate(rfid.sectorForBlock(1), MADkey)) {
+            var mad1 = rfid.readBlock(1);
+            var mad2 = rfid.readBlock(2);
+            var mad = Buffer.concat([mad1, mad2]);
+            console.log(mad.toString('hex'));
+            return mad;
+        }
+        return null;
+    }
+
     RED.nodes.registerType("rpi-rfid in",RFID);
     RED.nodes.registerType("rpi-rfid write",RFIDWrite);
     RED.nodes.registerType("rpi-rfid read",RFIDRead);
     RED.nodes.registerType("rpi-rfid read-ndef",RFIDReadNDEF);
+    RED.nodes.registerType("rpi-rfid write-ndef",RFIDWriteNDEF);
 }
