@@ -111,16 +111,30 @@ module.exports = function(RED) {
             if (msg != null && msg.hasOwnProperty("payload")) {
                 var tag = this.rfid.selectTag();
                 if (tag) {
-                    if (this.rfid.authenticate(this.rfid.sectorForBlock(msg.block))) {
-                        var data = this.rfid.readBlock(msg.block);
+                    if (tag.tagType == "Mifare Ultralight") {
+                        // It's one of the tags from the Ultralight family
+                        // which includes the NTAG203, etc.
+                        var data = this.rfid.readPage(msg.block);
                         if (data != null) {
                             msg.payload = data.toString('hex');
                             this.send(msg);
                         } else {
                             this.error("Couldn't read from RFID tag");
                         }
+                    } else if (tag.tagType == "Mifare 1K") {
+                        if (this.rfid.authenticate(this.rfid.sectorForBlock(msg.block))) {
+                            var data = this.rfid.readBlock(msg.block);
+                            if (data != null) {
+                                msg.payload = data.toString('hex');
+                                this.send(msg);
+                            } else {
+                                this.error("Couldn't read from RFID tag");
+                            }
+                        } else {
+                            this.error("Couldn't authenticate RFID tag");
+                        }
                     } else {
-                        this.error("Couldn't authenticate RFID tag");
+                        this.error("Unrecognised tag type: "+tag.tagType);
                     }
                 } else {
                     this.error("No RFID tag found");
@@ -141,40 +155,71 @@ module.exports = function(RED) {
             if (msg != null) {
                 var tag = this.rfid.selectTag();
                 if (tag) {
-                    var NDEFkey = new Buffer(6);
-                    NDEFkey[0] = 0xD3;
-                    NDEFkey[1] = 0xF7;
-                    NDEFkey[2] = 0xD3;
-                    NDEFkey[3] = 0xF7;
-                    NDEFkey[4] = 0xD3;
-                    NDEFkey[5] = 0xF7;
-                    // This currently only works for MiFare Classic tags
-                    // See http://www.nxp.com/documents/application_note/AN1304.pdf for details
-                    // on how NDEF data is stored in Classic tags
-                    // Read the MAD (Mifare Application Directory) in to find out where the
-                    var mad = readMAD(this.rfid);
-                    if (mad) {
-                        // The MAD has two-bytes for each sector, explaining
-                        // what application is using them.  Read in all the
-                        // NDEF sectors and store them in an array of buffers
+                    // Find any ndefData...
+                    var rawNDEF = null;
+                    if (tag.tagType == "Mifare Ultralight") {
+                        // It's one of the tags from the Ultralight family
+                        // which includes the NTAG203, etc.
+
+                        // Read in all the pages, assuming they all contain NDEF data
                         var ndefSectors = [];
-                        // FIXME This assumes we're only using MAD1, and only
-                        // FIXME using the first 1K of the tag
-                        for (i = 1; i < 16; i++) {
-                            if ((mad[i*2] == 0x03) && (mad[i*2+1] == 0xE1)) {
-                                // This sector contains NDEF data
-                                if (this.rfid.authenticate(i, NDEFkey)) {
-                                    var block0 = this.rfid.readBlock(i<<2);
-                                    var block1 = this.rfid.readBlock((i<<2)+1);
-                                    var block2 = this.rfid.readBlock((i<<2)+2);
-                                    ndefSectors.push(Buffer.concat([block0, block1, block2]));
-                                } else {
-                                    console.log("Couldn't authenticate NDEF sector with NDEF key");
+                        // There seems to be no way to find the size of an Ultralight
+                        // tag, so we'll just read until we get an error
+                        var page = 4; // skip the first four pages as they hold
+                                      // general info on the tag
+                        var data = null;
+                        do {
+                            data = this.rfid.readPage(page++);
+                            ndefSectors.push(data);
+                        } while (data != null);
+                        // We'll always end with a "null" last entry in ndefSectors
+                        // so remove it
+                        ndefSectors.pop();
+                        rawNDEF = Buffer.concat(ndefSectors);
+                    } else if (tag.tagType == "Mifare 1K") {
+                        var NDEFkey = new Buffer(6);
+                        NDEFkey[0] = 0xD3;
+                        NDEFkey[1] = 0xF7;
+                        NDEFkey[2] = 0xD3;
+                        NDEFkey[3] = 0xF7;
+                        NDEFkey[4] = 0xD3;
+                        NDEFkey[5] = 0xF7;
+                        // This currently only works for MiFare Classic tags
+                        // See http://www.nxp.com/documents/application_note/AN1304.pdf for details
+                        // on how NDEF data is stored in Classic tags
+                        // Read the MAD (Mifare Application Directory) in to find out where the
+                        var mad = readMAD(this.rfid);
+                        if (mad) {
+                            // The MAD has two-bytes for each sector, explaining
+                            // what application is using them.  Read in all the
+                            // NDEF sectors and store them in an array of buffers
+                            var ndefSectors = [];
+                            // FIXME This assumes we're only using MAD1, and only
+                            // FIXME using the first 1K of the tag
+                            for (i = 1; i < 16; i++) {
+                                if ((mad[i*2] == 0x03) && (mad[i*2+1] == 0xE1)) {
+                                    // This sector contains NDEF data
+                                    if (this.rfid.authenticate(i, NDEFkey)) {
+                                        var block0 = this.rfid.readBlock(i<<2);
+                                        var block1 = this.rfid.readBlock((i<<2)+1);
+                                        var block2 = this.rfid.readBlock((i<<2)+2);
+                                        ndefSectors.push(Buffer.concat([block0, block1, block2]));
+                                    } else {
+                                        console.log("Couldn't authenticate NDEF sector with NDEF key");
+                                    }
                                 }
                             }
+                            rawNDEF = Buffer.concat(ndefSectors);
+                        } else {
+                            console.log("Couldn't authenticate RFID tag");
                         }
+                    } else {
+                        this.error("Unrecognised tag type: "+tag.tagType);
+                    }
+
+                    if (rawNDEF != null)
+                    {
                         // Now we've got all the NDEF data, we need to parse it
-                        var rawNDEF = Buffer.concat(ndefSectors);
                         var idx = 0;
                         var ndefRecords = [];
                         while (idx < rawNDEF.length) {
@@ -216,8 +261,6 @@ module.exports = function(RED) {
                             msg.ndef= ndefRecords[i];
                             this.send(msg);
                         }
-                    } else {
-                        console.log("Couldn't authenticate RFID tag");
                     }
                 } else {
                     this.error("No RFID tag found");
