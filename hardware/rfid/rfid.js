@@ -35,6 +35,7 @@ module.exports = function(RED) {
         var node = this;
 
         node._interval = setInterval( function() {
+            this.rfid.init();
             var tag = node.rfid.selectTag();
             if (tag) {
                 if (!node.cardPresent) {
@@ -71,6 +72,7 @@ module.exports = function(RED) {
                 if (msg.block != null && msg.payload) {
                     // We've got our pre-requisites
                     // Find an RFID tag first
+                    this.rfid.init();
                     var tag = this.rfid.selectTag();
                     if (tag) {
                         // Tag found.  Authenticate with the block first
@@ -109,6 +111,7 @@ module.exports = function(RED) {
 
         this.on("input", function(msg) {
             if (msg != null && msg.hasOwnProperty("payload")) {
+                this.rfid.init();
                 var tag = this.rfid.selectTag();
                 if (tag) {
                     if (tag.tagType == "Mifare Ultralight") {
@@ -153,6 +156,7 @@ module.exports = function(RED) {
 
         this.on("input", function(msg) {
             if (msg != null) {
+                this.rfid.init();
                 var tag = this.rfid.selectTag();
                 if (tag) {
                     // Find any ndefData...
@@ -282,6 +286,7 @@ module.exports = function(RED) {
                 if (msg.payload) {
                     // We've got our pre-requisites
                     // Find an RFID tag first
+                    this.rfid.init();
                     var tag = this.rfid.selectTag();
                     if (tag) {
                         // Tag found.
